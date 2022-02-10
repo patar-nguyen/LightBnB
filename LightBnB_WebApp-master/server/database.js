@@ -2,6 +2,7 @@ const properties = require('./json/properties.json');
 const users = require('./json/users.json');
 
 const { Pool } = require('pg');
+const query = require('express/lib/middleware/query');
 
 const pool = new Pool({
   user: 'vagrant',
@@ -18,12 +19,13 @@ const pool = new Pool({
  */
 const getUserWithEmail = function(email) {
   return pool
-    .query(`SELECT * FROM users WHERE email = $1`, [email])
-    .then((result) => result.rows[0])
-    .catch((err) => {
-      console.log(err.message);
-      return (null);
-    });
+  .query(`SELECT * FROM users WHERE email = $1`, [email])
+  .then((result) => {
+     return(result.rows[0])
+  })
+  .catch((error) => {
+    console.log(error)
+  })
   // let user;
   // for (const userId in users) {
   //   user = users[userId];
@@ -44,11 +46,13 @@ exports.getUserWithEmail = getUserWithEmail;
  */
 const getUserWithId = function(id) {
   return pool
-    .query(`SELECT * FROM users WHERE id = $1`, [id])
-    .then((result) => result.rows[0])
-    .catch((err) => {
-      console.log(err.message);
-    });
+  .query(`SELECT * FROM users WHERE id = $1`, [id])
+  .then((result) => {
+   return result.rows[0];
+  })
+  .catch((error) => {
+    console.log(error)
+  })
   // return Promise.resolve(users[id]);
 }
 exports.getUserWithId = getUserWithId;
@@ -60,18 +64,11 @@ exports.getUserWithId = getUserWithId;
  * @return {Promise<{}>} A promise to the user.
  */
 const addUser =  function(user) {
-  const queryString = `
-  INSERT INTO users (name, email, password) 
-  VALUES ($1, $2, $3)
-  RETURNING *;
-  `;
-  const values = [user.name, user.email, 'password'];
-
-  return pool.query(queryString, values)
-    .then((result) => result.rows)
-    .catch((err) => {
-      console.log(err.message);
-    });
+  return pool
+  .query(`INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING *;`, [user.name, user.email, user.password])
+  .then((result) => {
+    return result.rows[0];
+  })
   // const userId = Object.keys(users).length + 1;
   // user.id = userId;
   // users[userId] = user;
@@ -95,8 +92,9 @@ const getAllReservations = function(guest_id, limit = 10) {
   WHERE reservations.guest_id = $1
   AND start_date < now()
   GROUP BY reservations.id, properties.id, property_reviews.rating
+  LIMIT $2;
   `;
-  const values = [guest_id];
+  const values = [guest_id, limit];
 
   return pool.query(queryString, values)
     .then((result) => result.rows)
@@ -116,12 +114,64 @@ exports.getAllReservations = getAllReservations;
  * @return {Promise<[{}]>}  A promise to the properties.
  */
 const getAllProperties = function(options, limit = 10) {
-  return pool
-    .query(`SELECT * FROM properties LIMIT $1`, [limit])
-    .then((result) => result.rows)
-    .catch((err) => {
-      console.log(err.message);
+  const queryParams = [];
+  // 2
+  let queryString = `
+  SELECT properties.*, avg(property_reviews.rating) as average_rating
+  FROM properties
+  JOIN property_reviews ON properties.id = property_id
+  `;
+
+  // 3
+  if (options.city) {
+    queryParams.push(`%${options.city}%`);
+    queryString += `WHERE city LIKE $${queryParams.length} `;
+  }
+
+  if (options.owner_id) {
+    queryParams.push(options.owner_id);
+    queryString += `AND owner_id = $${queryParams.length} `;
+  }
+
+  if (options.minimum_price_per_night && options.maximum_price_per_night) {
+    queryParams.push(parseInt(options.minimum_price_per_night));
+    queryString += `AND cost_per_night >= $${queryParams.length} `;
+
+    queryParams.push(parseInt(options.maximum_price_per_night));
+    queryString += `AND cost_per_night <= $${queryParams.length} `;
+  }
+
+  queryString += `GROUP BY properties.id `;
+
+  if (options.minimum_rating) {
+    queryParams.push(parseInt(options.minimum_rating));
+    queryString += `HAVING avg(rating) >= $${queryParams.length}`;
+  }
+
+  // 4
+  queryParams.push(limit);
+  queryString += `
+  ORDER BY cost_per_night
+  LIMIT $${queryParams.length};
+  `;
+
+  // 5
+  console.log(queryString, queryParams);
+
+  // 6
+  return pool.query(queryString, queryParams)
+  .then((res) => res.rows)
+  .catch((err) => {
+    console.log(err.message);
   });
+
+
+  // return pool
+  //   .query(`SELECT * FROM properties LIMIT $1`, [limit])
+  //   .then((result) => result.rows)
+  //   .catch((err) => {
+  //     console.log(err.message);
+  // });
 
   // const limitedProperties = {};
   // for (let i = 1; i <= limit; i++) {
